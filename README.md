@@ -1,109 +1,196 @@
-# Vagrant Project — Multi-VM Development Environment
+# VProfile — Multi-Tier Application Stack
 
-This repository provides a multi-VM Vagrant environment used to run a small services stack (database, cache, message broker, application server, and web server) for development and testing.
+> A fully automated, multi-VM local infrastructure project provisioned with Vagrant and VirtualBox. Simulates a production-grade service stack with five isolated VMs, static private networking, and automated shell-based provisioning.
 
-The environment is defined in the provided `Vagrantfile` and provisioned using shell scripts in the repository:
+[![Stack](https://img.shields.io/badge/IaC-Vagrant-1563FF?style=flat-square)](https://www.vagrantup.com/)
+[![OS](https://img.shields.io/badge/OS-CentOS%20Stream%209%20%7C%20Ubuntu%2022.04-informational?style=flat-square)]()
+[![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
 
-- `mariadb.sh` — provision the MariaDB / database VM (`db01`)
-- `memcached.sh` — provision the Memcached VM (`mc01`)
-- `rabbitmq.sh` — provision the RabbitMQ VM (`rmq01`)
-- `tomcat.sh` — provision the application VM running Tomcat (`app01`)
-- `nginx.sh` — provision the web/frontend VM (`web01`)
+---
 
-Summary of Vagrant machines (as defined in `Vagrantfile`):
+## Architecture Overview
 
-- `db01` (eurolinux-vagrant/centos-stream-9) — private IP 192.168.56.15, memory: 2048 MB
-- `mc01` (eurolinux-vagrant/centos-stream-9) — private IP 192.168.56.14, memory: 900 MB
-- `rmq01` (eurolinux-vagrant/centos-stream-9) — private IP 192.168.56.13, memory: 600 MB
-- `app01` (eurolinux-vagrant/centos-stream-9) — private IP 192.168.56.12, memory: 4200 MB
-- `web01` (ubuntu/jammy64) — private IP 192.168.56.11, memory: 800 MB (GUI enabled in Vagrantfile)
+```
+                        ┌─────────────────────────────────┐
+                        │        Host Machine (Browser)    │
+                        └────────────────┬────────────────┘
+                                         │ HTTP :80
+                              ┌──────────▼──────────┐
+                              │   Nginx  (web01)     │
+                              │   192.168.56.11      │
+                              │   Ubuntu Jammy 64    │
+                              └──────────┬──────────┘
+                                         │ Reverse Proxy → :8080
+                              ┌──────────▼──────────┐
+                              │  Tomcat  (app01)     │
+                              │  192.168.56.12       │
+                              │  CentOS Stream 9     │
+                              └──────┬───────┬───────┘
+                                     │       │
+                   ┌─────────────────┘       └──────────────────┐
+                   │ :3306                                :5672  │
+       ┌───────────▼──────────┐               ┌─────────────────▼──┐
+       │  MariaDB  (db01)     │               │  RabbitMQ (rmq01)   │
+       │  192.168.56.15       │               │  192.168.56.13      │
+       │  CentOS Stream 9     │               │  CentOS Stream 9    │
+       └──────────────────────┘               └────────────────────┘
+                   │ :11211
+       ┌───────────▼──────────┐
+       │ Memcached (mc01)     │
+       │ 192.168.56.14        │
+       │ CentOS Stream 9      │
+       └──────────────────────┘
+```
 
-The Vagrant configuration uses the `virtualbox` provider for all VMs and enables the `vagrant-hostmanager` plugin to manage host entries.
+---
 
-## Prerequisites (host machine)
+## Tech Stack
 
-Before running this environment on your workstation (Linux, macOS, or Windows), ensure the host machine meets these prerequisites:
+| VM Name | Role | Service | OS | Private IP | RAM |
+|---------|------|---------|-----|------------|-----|
+| `web01` | Web / Reverse Proxy | Nginx | Ubuntu 22.04 (Jammy) | 192.168.56.11 | 800 MB |
+| `app01` | Application Server | Apache Tomcat | CentOS Stream 9 | 192.168.56.12 | 4200 MB |
+| `rmq01` | Message Broker | RabbitMQ | CentOS Stream 9 | 192.168.56.13 | 600 MB |
+| `mc01` | Cache Layer | Memcached | CentOS Stream 9 | 192.168.56.14 | 900 MB |
+| `db01` | Database | MariaDB | CentOS Stream 9 | 192.168.56.15 | 2048 MB |
 
-- Virtualization support enabled in BIOS/UEFI (VT-x/AMD-V).
-- Vagrant installed (recommended >= 2.2.x). Install from https://www.vagrantup.com/
-- VirtualBox installed (recommended latest stable release). If you prefer another provider, update the `Vagrantfile` accordingly.
-- Vagrant plugin `vagrant-hostmanager` (used by this Vagrantfile to update /etc/hosts). Install with:
+**Total RAM required:** ~8.5 GB (12 GB+ recommended on host)
 
-	vagrant plugin install vagrant-hostmanager
+---
 
-- Sufficient RAM and disk space. The configured VMs request approximately 8.5 GB of RAM total (2048 + 900 + 600 + 4200 + 800). To run them all concurrently, a host with at least 12 GB RAM is recommended. Allow ~20 GB free disk space for boxes and provisioning artifacts.
-- A working internet connection for the first `vagrant up` (to download boxes and packages during provisioning).
-- On Linux hosts: you may need to install additional kernel modules for VirtualBox (e.g., `virtualbox-dkms`) and ensure you can run VirtualBox as your user.
+## Prerequisites
 
-Notes:
-- If you cannot run all VMs concurrently due to host resource limits, start only the required VM(s) with `vagrant up <vm-name>` (examples below).
-- The `vagrant-hostmanager` plugin will attempt to update your system hosts file. It may prompt for a password or require manual action on some systems. If it fails, you can add the private IPs to `/etc/hosts` manually.
+Ensure the following are installed and configured on your host machine before proceeding.
 
-## How to bring up the environment
+| Requirement | Notes |
+|-------------|-------|
+| [Vagrant](https://www.vagrantup.com/) >= 2.2.x | Infrastructure provisioning tool |
+| [VirtualBox](https://www.virtualbox.org/) (latest stable) | Hypervisor provider |
+| `vagrant-hostmanager` plugin | Manages `/etc/hosts` for VM hostnames |
+| Virtualization enabled in BIOS | VT-x (Intel) or AMD-V required |
+| ~12 GB free RAM | For running all 5 VMs concurrently |
+| ~20 GB free disk space | For VM boxes and provisioning artifacts |
 
-1. Clone or open this repository and cd into the project directory.
+Install the required Vagrant plugin:
 
-2. Install prerequisites listed above (Vagrant, VirtualBox, `vagrant-hostmanager`).
+```bash
+vagrant plugin install vagrant-hostmanager
+```
 
-3. Start the full environment:
+---
 
-	vagrant up
+## Quick Start
 
-	- To force a specific provider (if multiple are installed), use `vagrant up --provider=virtualbox`.
+```bash
+# 1. Clone the repository
+git clone https://github.com/<your-username>/vprofile-project.git
+cd vprofile-project
 
-	- To bring up a single machine only, specify its name (example):
+# 2. Install the Vagrant plugin (first time only)
+vagrant plugin install vagrant-hostmanager
 
-		vagrant up db01
+# 3. Boot the full stack
+vagrant up
+```
 
-4. SSH into a machine:
+> On first run, Vagrant downloads the base boxes and runs all provisioning scripts automatically. This may take 10–20 minutes depending on your internet speed.
 
-	vagrant ssh db01
+To bring up a single VM only:
 
-5. Common lifecycle commands:
+```bash
+vagrant up db01
+```
 
-	vagrant halt           # stop all VMs
-	vagrant reload db01    # restart and re-provision db01
-	vagrant destroy        # remove all VMs and their storage
+---
 
-## Verification and where to look
+## Accessing Services
 
-- After `vagrant up`, provisioning shell scripts run automatically. You can inspect each script in the repository (e.g., `mariadb.sh`, `nginx.sh`) to see installed packages, configuration files, and service ports.
-- VMs use a private network with stable IPs (192.168.56.11 - 192.168.56.15). Access services from your host at those IPs, for example:
-	- Nginx (web01): http://192.168.56.11/ (or access via forwarded ports if added later)
-	- Tomcat (app01): check `/opt/tomcat` or configured service ports in `tomcat.sh`
-	- MariaDB (db01): connect at 192.168.56.15:3306 (if the provisioning opens the port)
+Once `vagrant up` completes successfully:
+
+| Service | URL / Connection |
+|---------|-----------------|
+| Web Application | http://192.168.56.11 |
+| Tomcat (direct) | http://192.168.56.12:8080 |
+| RabbitMQ Management UI | http://192.168.56.13:15672 |
+| MariaDB | `mysql -h 192.168.56.15 -u root -p` |
+| Memcached | `telnet 192.168.56.14 11211` |
+
+---
+
+## How Provisioning Works
+
+Each VM is automatically provisioned on first boot using a dedicated shell script:
+
+```
+Vagrantfile
+├── db01  ──▶  mariadb.sh    (installs and configures MariaDB)
+├── mc01  ──▶  memcached.sh  (installs and configures Memcached)
+├── rmq01 ──▶  rabbitmq.sh   (installs and configures RabbitMQ)
+├── app01 ──▶  tomcat.sh     (installs Java, Tomcat, deploys app)
+└── web01 ──▶  nginx.sh      (installs Nginx, sets reverse proxy)
+```
+
+Provisioning scripts run with `privileged: true` (root). Hostname resolution between VMs is handled automatically by the `vagrant-hostmanager` plugin, which writes all VM hostnames to `/etc/hosts` on each machine.
+
+---
+
+## Common Commands
+
+```bash
+vagrant up              # Start all VMs
+vagrant halt            # Stop all VMs gracefully
+vagrant destroy         # Remove all VMs and their disks
+vagrant ssh app01       # SSH into the Tomcat VM
+vagrant reload db01     # Restart and re-provision db01
+vagrant provision       # Re-run provisioning scripts on running VMs
+vagrant status          # Show state of all VMs
+```
+
+---
 
 ## Troubleshooting
 
-- If `vagrant up` fails with VirtualBox kernel module errors on Linux, run your distribution's VirtualBox kernel module installer (for example `sudo apt install virtualbox-dkms` on Debian/Ubuntu) and reboot or reload kernel modules.
-- If `vagrant-hostmanager` fails to write `/etc/hosts`, run the command with elevated privilege when prompted or add the IP-to-hostname mappings manually to `/etc/hosts`:
+See [docs/troubleshooting.md](docs/troubleshooting.md) for detailed fixes.
 
-	192.168.56.15 db01
-	192.168.56.14 mc01
-	192.168.56.13 rmq01
-	192.168.56.12 app01
-	192.168.56.11 web01
-
-- If provisioning scripts fail, inspect the machine logs via `vagrant ssh <vm>` and check `/var/log/` or the relevant service logs. You can also re-run provisioning with:
-
-	vagrant provision <vm-name>
-
-## Security and notes
-
-- The VM provisioning scripts run with elevated privileges (they use `privileged: true`). Review the scripts before running in untrusted environments.
-- This setup is intended for local development and testing only — do not expose production data or sensitive services without proper hardening.
-
-## Next steps / improvements
-
-- Add explicit port forwarding for services you want accessible on localhost.
-- Add a simple `hosts` file sample or automated check to ensure required host prerequisites are met.
-- Convert provisioning to Ansible for idempotent provisioning and easier maintenance.
-
-If you want, I can:
-
-- add port forwards to the `Vagrantfile` for specific services (e.g., Tomcat on 8080),
-- create a small script to check host prerequisites and print guidance before `vagrant up`, or
-- generate minimal usage examples for each service (how to connect to MariaDB, RabbitMQ, etc.).
+| Problem | Quick Fix |
+|---------|-----------|
+| VirtualBox kernel module errors on Linux | `sudo apt install virtualbox-dkms && reboot` |
+| `vagrant-hostmanager` sudo prompt | Enter host password when prompted, or add IPs to `/etc/hosts` manually |
+| VM fails to boot | Run `vagrant destroy <vm> && vagrant up <vm>` |
+| Provisioning script fails mid-run | SSH into the VM and check `/var/log/` |
+| App unreachable after boot | Wait 60s and retry — Tomcat startup takes time |
 
 ---
-Generated: updated README with Vagrant usage and host prerequisites.
+
+## Project Structure
+
+```
+vprofile-project/
+├── Vagrantfile          # Defines all 5 VMs, networking, and provisioning hooks
+├── mariadb.sh           # Provisions db01 — MariaDB setup and configuration
+├── memcached.sh         # Provisions mc01 — Memcached setup
+├── rabbitmq.sh          # Provisions rmq01 — RabbitMQ setup
+├── tomcat.sh            # Provisions app01 — Java + Tomcat + app deployment
+├── nginx.sh             # Provisions web01 — Nginx reverse proxy config
+├── docs/
+│   ├── architecture.md  # Detailed architecture and design decisions
+│   ├── mariadb.md       # MariaDB service reference
+│   ├── tomcat.md        # Tomcat service reference
+│   ├── nginx.md         # Nginx service reference
+│   ├── rabbitmq.md      # RabbitMQ service reference
+│   ├── memcached.md     # Memcached service reference
+│   └── troubleshooting.md
+└── CHANGELOG.md
+```
+
+---
+
+## Roadmap
+
+- [ ] Migrate shell provisioning to **Ansible playbooks**
+- [ ] Add **Docker Compose** version for container-based deployment
+- [ ] Integrate **GitHub Actions** CI pipeline with ShellCheck linting
+- [ ] Add **Prometheus + Grafana** monitoring layer
+- [ ] Add port-forwarding to Vagrantfile for localhost access
+
+---
